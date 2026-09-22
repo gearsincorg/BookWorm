@@ -16,4 +16,5 @@ public static class CredentialKeys
     public const string VisionAustralia = "Bookworm:VisionAustralia";
     public const string AzureMemoryStore = "Bookworm:AzureMemoryStore";
     public const string AnthropicApiKey = "Bookworm:AnthropicApiKey";
+    public const string AzureSpeech = "Bookworm:AzureSpeech";
 }

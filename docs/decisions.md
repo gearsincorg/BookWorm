@@ -65,6 +65,7 @@ D:\Users\Phil\GitHub\Bookworm\
                       VaLoanCapExceededException, VaRequestFailedException)
       Auth\
         ICredentialStore.cs / LibraryCredentials.cs / VaSessionManager.cs
+        AzureSpeechCredentials.cs
       Brain\
         IBrain.cs / ClaudeBrain.cs / StubBrain.cs
         ConversationContext.cs / BrainTurnResult.cs
@@ -79,10 +80,13 @@ D:\Users\Phil\GitHub\Bookworm\
         LibrarianOrchestrator.cs
       Speech\
         ISpeechRecognizer.cs / ISpeechSynthesizer.cs
+        AzureSpeechRecognizer.cs    (the real STT backend — portable, so it lives in Core, not Platform)
 
-    Bookworm.Windows.Platform\          (net10.0-windows)
+    Bookworm.Windows.Platform\          (net10.0-windows10.0.19041.0 — versioned for WinRT projections)
       Credentials\WindowsCredentialManagerStore.cs
-      Speech\SystemSpeechRecognizer.cs / WinRtSpeechSynthesizer.cs
+      Speech\SapiSpeechSynthesizer.cs           (the real TTS backend)
+      Speech\SystemSpeechRecognizer.cs          (SAPI STT — rejected for accuracy, kept for reference)
+      Speech\WinRtSpeechRecognizer.cs           (WinRT STT — also rejected for accuracy, kept for reference)
 
     Bookworm.Windows\                   (net10.0-windows, WPF app)
       App.xaml(.cs) / MainWindow.xaml(.cs)
@@ -148,11 +152,15 @@ public interface IMemoryStore
 
 **Storage**: `AzureBlobMemoryStore` — a single versioned JSON blob in the Azure Storage account already created (`mrphilbookworm`), using the blob's ETag for optimistic concurrency on read-modify-write. Exact container/blob name to be confirmed by enumerating the account via the SDK at implementation time (Phase 3) rather than assumed — recalled from the portal setup as a container and/or blob named `memory`, but not certain of the exact structure. Chosen over a full database because the data is a single small document with infrequent writes from effectively one active client at a time; a database would be unneeded overhead. The Azure Storage SDK is portable .NET (not Windows-only), so `AzureBlobMemoryStore` lives directly in `Bookworm.Core` and is reused unchanged by the future MAUI/Android app. The storage connection string/SAS token is stored via the same `ICredentialStore` mechanism as VA credentials — never in plaintext config. Cost is negligible (a few cents/month) for this data volume. If the user prefers a different hosting option they already have access to, this is a one-file swap behind `IMemoryStore` — no other code changes.
 
-## Speech pipeline
+## Speech pipeline — outcome (Phase 2, tested against the real account holder's voice/headset)
 
-- **TTS**: `Windows.Media.SpeechSynthesis` (WinRT "Natural"/OneCore voices) — noticeably better quality than legacy SAPI, free, offline. Response quality matters disproportionately here since the user only ever hears the answer. Wrapped behind `ISpeechSynthesizer`, implemented in `Bookworm.Windows.Platform`.
-- **STT**: `System.Speech.Recognition` (SAPI) for push-to-talk in Phase 2/4 — free, offline, simplest WPF integration. Open risk: dictation accuracy on book titles/author names may be mediocre — validate in Phase 2; fallback is `Windows.Media.SpeechRecognition` (still free) before considering a paid option, since Claude API is already the app's main ongoing cost.
-- **Push-to-talk UI**: a standard WPF `Button` (not custom-drawn, for correct automation-peer behavior) with `AutomationProperties.Name="Talk"`, wired to both mouse and keyboard press/release via `PushToTalkController`.
+- **TTS**: `System.Speech.Synthesis` (legacy SAPI) — tested and confirmed acceptable quality, free, offline. Implemented as `SapiSpeechSynthesizer` in `Bookworm.Windows.Platform`. (Azure AI Speech, added for STT below, also offers higher-quality neural voices under the same resource — an easy future upgrade if SAPI's quality ever feels lacking, but not needed now.)
+- **STT**: escalated past both free Windows options, in order tested:
+  1. `System.Speech.Recognition` (SAPI dictation) — **rejected**: garbled entire phrases in real testing ("add the new Bernard Cornwell book to my bookshelf" → "And the need to not clone will go to my books a"), not just proper nouns.
+  2. `Windows.Media.SpeechRecognition` (WinRT) — **rejected**: despite being the "modern" API, accuracy was equally poor in real testing. Its API design is newer than SAPI's, but it isn't backed by a meaningfully better language model for freeform dictation — that turned out to require Windows' separate Voice Typing feature, which isn't exposed as an embeddable API this way.
+  3. **Azure AI Speech (cloud)** — **adopted**. Perfect transcription of the same test phrase. Implemented as `AzureSpeechRecognizer` directly in `Bookworm.Core` (the SDK is portable, not Windows-only, so this is reusable unchanged by the future MAUI/Android app — unlike the two rejected Windows-only implementations, which remain in `Bookworm.Windows.Platform` for reference but aren't used by the real app). Free tier (5 hours/month) expected to cover personal use; the resource lives in the same Azure account as the memory-store blob storage. Credentials stored via `ICredentialStore` under `CredentialKeys.AzureSpeech`, same pattern as VA and memory-store secrets.
+- **Push-to-talk model**: `ISpeechRecognizer.StartListening()` / `StopListeningAsync()` maps directly onto each backend's continuous-recognition start/stop, so button press/release timing is exact rather than relying on a backend's own auto-endpointing.
+- **Push-to-talk UI** (Phase 4, not yet built): a standard WPF `Button` (not custom-drawn, for correct automation-peer behavior) with `AutomationProperties.Name="Talk"`, wired to both mouse and keyboard press/release via `PushToTalkController`.
 
 ## Phased build order
 
@@ -160,7 +168,7 @@ public interface IMemoryStore
 |---|---|---|
 | **0 — Setup** | Install .NET 10 SDK, scaffold solution/projects above, git init, NuGet (CredentialManagement, xUnit, Moq, Azure.Storage.Blobs). Azure Storage account (`mrphilbookworm`) already created — enumerate its containers via the SDK at Phase 3 implementation time to confirm exact naming, then load the saved connection string into `ICredentialStore`. | No |
 | **1 — VA client** | Implement `Bookworm.Core/Library/*` + `Bookworm.Console` CLI (login/search/bookshelf/add/remove/requestlist/subscriptions/history) against the real account. Confirm the download endpoint and whether add/remove GETs need CSRF headers; confirm session cookie lifetime. | No |
-| **2 — Speech echo test** | Push-to-talk → STT → print → TTS speaks it back, standalone. Validate SAPI accuracy on real book/author names; decide if WinRT STT fallback is needed. | No |
+| **2 — Speech echo test** | ✅ Done. Push-to-talk → STT → print → TTS speaks it back, standalone, tested against the real account holder's voice. SAPI and WinRT STT both failed accuracy testing; escalated to Azure AI Speech, which nailed it. SAPI TTS confirmed acceptable. | No |
 | **3 — Conversational Brain harness** | `Bookworm.Console chat` mode: typed text → `LibrarianOrchestrator` + `StubBrain`, then `ClaudeBrain` once billing exists. This is where the discovery/summarization/narrowing behavior gets designed and iterated — build `ResultSummarizer`, `ReaderProfile`, and `IMemoryStore`/`AzureBlobMemoryStore` here; test against the user's real bookshelf/history data and verify memory persists across separate console runs. `--dry-run` flag logs intended loan-consuming calls instead of executing them. | StubBrain: No. ClaudeBrain: Yes. |
 | **4 — Full integration** | WPF app wiring speech (Phase 2) + Brain/orchestrator (Phase 3) + VA client (Phase 1) behind the push-to-talk button, with a transcript/status log. | Yes |
 | **5 — Polish** | Retry/backoff tuning, logging, confirmation UX refinement, packaging (MSIX/installer), real NVDA pass, global hotkey. | Yes |

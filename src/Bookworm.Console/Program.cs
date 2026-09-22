@@ -2,7 +2,9 @@ using Bookworm.Core.Auth;
 using Bookworm.Core.Library;
 using Bookworm.Core.Library.Exceptions;
 using Bookworm.Core.Library.Models;
+using Bookworm.Core.Speech;
 using Bookworm.Windows.Platform.Credentials;
+using Bookworm.Windows.Platform.Speech;
 
 var credentialStore = new WindowsCredentialManagerStore();
 var rawClient = new VaLibraryClient();
@@ -50,6 +52,21 @@ try
             break;
         case "raw":
             await ShowRawAsync(Require(args, 1, "relativeUrl"));
+            break;
+        case "speechtest":
+            await SpeechEchoTestAsync(new SystemSpeechRecognizer());
+            break;
+        case "speechtest2":
+            await SpeechEchoTestAsync(new WinRtSpeechRecognizer());
+            break;
+        case "azurespeechsetup":
+            await AzureSpeechSetupAsync();
+            break;
+        case "speechtest3":
+            await SpeechEchoTestAsync(await CreateAzureRecognizerAsync());
+            break;
+        case "say":
+            await SayAsync(string.Join(' ', args.Skip(1)));
             break;
         default:
             PrintUsage();
@@ -129,6 +146,11 @@ static void PrintUsage()
           subscribe <bookshareId>              Subscribe to a periodical
           history                              Show loan history
           raw <relativeUrl>                    Debug: print the raw response body for a GET (e.g. /library/my-history)
+          speechtest                           Push-to-talk echo test using legacy SAPI dictation
+          speechtest2                          Push-to-talk echo test using modern WinRT speech recognition
+          azurespeechsetup                     Enter and save your Azure AI Speech key + region
+          speechtest3                          Push-to-talk echo test using Azure AI Speech
+          say <text>                           Speak text via TTS (no mic needed) — quick TTS-only sanity check
         """);
 }
 
@@ -237,6 +259,47 @@ async Task ShowRawAsync(string relativeUrl)
     await client.GetBookshelfAsync(CancellationToken.None); // cheap call to force authentication via the session manager
     var body = await rawClient.GetRawAsync(relativeUrl, CancellationToken.None);
     Console.WriteLine(body);
+}
+
+async Task AzureSpeechSetupAsync()
+{
+    var key = PromptHidden("Azure Speech key");
+    var region = Prompt("Azure Speech region (e.g. australiaeast)");
+    var credentials = new AzureSpeechCredentials { Key = key, Region = region };
+    await credentials.SaveAsync(credentialStore, CancellationToken.None);
+    Console.WriteLine("Saved Azure Speech credentials.");
+}
+
+async Task<AzureSpeechRecognizer> CreateAzureRecognizerAsync()
+{
+    var credentials = await AzureSpeechCredentials.LoadAsync(credentialStore, CancellationToken.None)
+        ?? throw new InvalidOperationException("No Azure Speech credentials saved yet — run 'azurespeechsetup' first.");
+    return new AzureSpeechRecognizer(credentials);
+}
+
+async Task SayAsync(string text)
+{
+    using var synthesizer = new SapiSpeechSynthesizer();
+    Console.WriteLine($"Speaking: \"{text}\"");
+    await synthesizer.SpeakAsync(text);
+}
+
+async Task SpeechEchoTestAsync(ISpeechRecognizer recognizer)
+{
+    using var _ = recognizer;
+    using var synthesizer = new SapiSpeechSynthesizer();
+
+    Console.WriteLine("Press Enter to start listening (push-to-talk)...");
+    Console.ReadLine();
+    Console.WriteLine("Listening — speak now, then press Enter to stop.");
+    recognizer.StartListening();
+    Console.ReadLine();
+
+    var text = await recognizer.StopListeningAsync();
+    Console.WriteLine(string.IsNullOrWhiteSpace(text) ? "Recognized: (nothing understood)" : $"Recognized: \"{text}\"");
+
+    var reply = string.IsNullOrWhiteSpace(text) ? "I didn't catch that." : $"You said: {text}";
+    await synthesizer.SpeakAsync(reply);
 }
 
 static LibraryItemType ParseType(string? typeArg) => typeArg?.ToLowerInvariant() switch

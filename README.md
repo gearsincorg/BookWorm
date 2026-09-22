@@ -6,7 +6,11 @@ See [docs/decisions.md](docs/decisions.md) for the full implementation plan, arc
 
 ## Status
 
-Phase 1 mostly complete — the VA Library API client (`Bookworm.Core.Library`) is implemented and verified against a real account for login, search, bookshelf (list/add), request list, and subscriptions. Remaining gaps: the bookshelf item download endpoint hasn't been found yet, remove-from-bookshelf/request-list/subscription aren't click-verified, and history parsing isn't implemented (VA serves it as HTML, not JSON). See [docs/va-endpoints.md](docs/va-endpoints.md) for full details. `Bookworm.Console` is a working CLI test harness (`login`, `search`, `bookshelf`, `add`, `remove`, `requestlist`, `addrequest`, `subscriptions`, `subscribe`, `history`, `raw`).
+Phase 1 mostly complete — the VA Library API client (`Bookworm.Core.Library`) is implemented and verified against a real account for login, search, bookshelf (list/add), request list, and subscriptions. Remaining gaps: the bookshelf item download endpoint hasn't been found yet, remove-from-bookshelf/request-list/subscription aren't click-verified, and history parsing isn't implemented (VA serves it as HTML, not JSON). See [docs/va-endpoints.md](docs/va-endpoints.md) for full details.
+
+Phase 2 (speech pipeline) done — TTS via legacy SAPI works fine; STT needed escalating past both free Windows options (SAPI dictation and WinRT speech recognition both garbled real speech badly) to Azure AI Speech, which transcribed perfectly. See docs/decisions.md's Speech pipeline section for the full story.
+
+`Bookworm.Console` is a working CLI test harness: `login`, `search`, `bookshelf`, `add`, `remove`, `requestlist`, `addrequest`, `subscriptions`, `subscribe`, `history`, `raw`, `say`, `speechtest`/`speechtest2`/`speechtest3`, `azurespeechsetup`.
 
 ## Solution layout
 
@@ -19,6 +23,7 @@ Phase 1 mostly complete — the VA Library API client (`Bookworm.Core.Library`) 
 ## Requirements
 
 - .NET 10 SDK
-- Windows 10/11 (for speech APIs and Credential Manager)
+- Windows 10/11 (for Credential Manager and TTS; STT is cloud-based so it doesn't depend on Windows speech quality)
 - An Anthropic API key (for the real conversational Brain — not required for Phases 0–2)
+- An Azure AI Speech resource (for STT — see docs/decisions.md's Speech pipeline section for why)
 - Vision Australia Library membership credentials
