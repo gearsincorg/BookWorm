@@ -1,0 +1,28 @@
+# .NET build output
+bin/
+obj/
+out/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+# Test results
+[Tt]est[Rr]esult*/
+*.trx
+
+# Publish output
+publish/
+
+# Rider/VS Code
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Secrets (never commit real credentials/connection strings)
+appsettings.*.local.json
+*.pfx

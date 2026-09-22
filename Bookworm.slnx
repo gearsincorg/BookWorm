@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Bookworm.Console/Bookworm.Console.csproj" />
+    <Project Path="src/Bookworm.Core/Bookworm.Core.csproj" />
+    <Project Path="src/Bookworm.Windows.Platform/Bookworm.Windows.Platform.csproj" />
+    <Project Path="src/Bookworm.Windows/Bookworm.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Bookworm.Core.Tests/Bookworm.Core.Tests.csproj" />
+  </Folder>
+</Solution>
