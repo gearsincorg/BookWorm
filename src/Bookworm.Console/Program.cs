@@ -1,7 +1,12 @@
+using Azure.Storage.Blobs;
 using Bookworm.Core.Auth;
+using Bookworm.Core.Brain;
+using Bookworm.Core.Brain.Tools;
 using Bookworm.Core.Library;
 using Bookworm.Core.Library.Exceptions;
 using Bookworm.Core.Library.Models;
+using Bookworm.Core.Memory;
+using Bookworm.Core.Orchestration;
 using Bookworm.Core.Speech;
 using Bookworm.Windows.Platform.Credentials;
 using Bookworm.Windows.Platform.Speech;
@@ -68,6 +73,18 @@ try
         case "say":
             await SayAsync(string.Join(' ', args.Skip(1)));
             break;
+        case "claudesetup":
+            await ClaudeSetupAsync();
+            break;
+        case "memorysetup":
+            await MemorySetupAsync();
+            break;
+        case "listcontainers":
+            await ListContainersAsync();
+            break;
+        case "chat":
+            await ChatAsync(dryRun: args.Contains("--dry-run", StringComparer.OrdinalIgnoreCase));
+            break;
         default:
             PrintUsage();
             return 1;
@@ -126,7 +143,9 @@ static string PromptHidden(string label)
         }
     }
     Console.WriteLine();
-    return sb.ToString();
+    // Trimmed defensively: a pasted key/connection string with a trailing newline or stray space is a
+    // common paste artifact and produces a confusing 401 rather than an obvious error.
+    return sb.ToString().Trim();
 }
 
 static void PrintUsage()
@@ -151,6 +170,10 @@ static void PrintUsage()
           azurespeechsetup                     Enter and save your Azure AI Speech key + region
           speechtest3                          Push-to-talk echo test using Azure AI Speech
           say <text>                           Speak text via TTS (no mic needed) — quick TTS-only sanity check
+          claudesetup                          Enter and save your Anthropic API key
+          memorysetup                          Enter and save your Azure Storage connection string + container
+          listcontainers                       Debug: list containers in the configured Azure Storage account
+          chat [--dry-run]                     Typed conversational Brain harness (Phase 3) — the real thing
         """);
 }
 
@@ -300,6 +323,81 @@ async Task SpeechEchoTestAsync(ISpeechRecognizer recognizer)
 
     var reply = string.IsNullOrWhiteSpace(text) ? "I didn't catch that." : $"You said: {text}";
     await synthesizer.SpeakAsync(reply);
+}
+
+async Task ClaudeSetupAsync()
+{
+    var key = PromptHidden("Anthropic API key");
+    await credentialStore.SetSecretAsync(CredentialKeys.AnthropicApiKey, key, CancellationToken.None);
+    Console.WriteLine("Saved Anthropic API key.");
+}
+
+async Task MemorySetupAsync()
+{
+    var connectionString = PromptHidden("Azure Storage connection string");
+    var containerName = Prompt("Container name");
+    var credentials = new AzureMemoryStoreCredentials { ConnectionString = connectionString, ContainerName = containerName };
+    await credentials.SaveAsync(credentialStore, CancellationToken.None);
+    Console.WriteLine("Saved Azure memory-store credentials.");
+}
+
+async Task ListContainersAsync()
+{
+    var credentials = await AzureMemoryStoreCredentials.LoadAsync(credentialStore, CancellationToken.None)
+        ?? throw new InvalidOperationException("No Azure memory-store credentials saved yet — run 'memorysetup' first (container name doesn't matter for this check).");
+    var service = new BlobServiceClient(credentials.ConnectionString);
+    Console.WriteLine("Containers in this storage account:");
+    await foreach (var container in service.GetBlobContainersAsync())
+    {
+        Console.WriteLine($"  {container.Name}");
+    }
+}
+
+async Task ChatAsync(bool dryRun)
+{
+    var apiKey = await credentialStore.GetSecretAsync(CredentialKeys.AnthropicApiKey, CancellationToken.None);
+    IBrain brain = apiKey is not null ? new ClaudeBrain(apiKey) : new StubBrain();
+    Console.WriteLine(apiKey is not null
+        ? "Using ClaudeBrain (real Anthropic API)."
+        : "No Anthropic API key saved — using StubBrain (canned responses). Run 'claudesetup' to use the real thing.");
+
+    var memoryCredentials = await AzureMemoryStoreCredentials.LoadAsync(credentialStore, CancellationToken.None);
+    IMemoryStore memoryStore;
+    if (memoryCredentials is not null)
+    {
+        memoryStore = new AzureBlobMemoryStore(memoryCredentials.ConnectionString, memoryCredentials.ContainerName);
+    }
+    else
+    {
+        memoryStore = new InMemoryMemoryStore();
+        Console.WriteLine("No Azure memory-store credentials saved — using in-session-only memory. Run 'memorysetup' to persist across runs.");
+    }
+
+    var toolExecutor = new ToolCallExecutor(client, dryRun);
+    var orchestrator = new LibrarianOrchestrator(brain, toolExecutor, client, memoryStore);
+
+    Console.WriteLine("Initializing (loading bookshelf, history, and remembered preferences)...");
+    await orchestrator.InitializeAsync(CancellationToken.None);
+    Console.WriteLine(dryRun
+        ? "Chat ready (DRY RUN — no real bookshelf/request-list/subscription changes will be made). Type 'exit' to quit."
+        : "Chat ready. Type 'exit' to quit.");
+
+    while (true)
+    {
+        Console.Write("\nyou> ");
+        var input = Console.ReadLine();
+        if (string.IsNullOrWhiteSpace(input) || input.Trim().Equals("exit", StringComparison.OrdinalIgnoreCase))
+        {
+            break;
+        }
+        var response = await orchestrator.ProcessUserUtteranceAsync(input, CancellationToken.None);
+        Console.WriteLine($"bookworm> {response}");
+    }
+
+    await orchestrator.SaveMemoryAsync(CancellationToken.None);
+    Console.WriteLine("Memory saved. Bye.");
+
+    (brain as IDisposable)?.Dispose();
 }
 
 static LibraryItemType ParseType(string? typeArg) => typeArg?.ToLowerInvariant() switch

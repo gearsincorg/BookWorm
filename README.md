@@ -10,7 +10,9 @@ Phase 1 mostly complete — the VA Library API client (`Bookworm.Core.Library`) 
 
 Phase 2 (speech pipeline) done — TTS via legacy SAPI works fine; STT needed escalating past both free Windows options (SAPI dictation and WinRT speech recognition both garbled real speech badly) to Azure AI Speech, which transcribed perfectly. See docs/decisions.md's Speech pipeline section for the full story.
 
-`Bookworm.Console` is a working CLI test harness: `login`, `search`, `bookshelf`, `add`, `remove`, `requestlist`, `addrequest`, `subscriptions`, `subscribe`, `history`, `raw`, `say`, `speechtest`/`speechtest2`/`speechtest3`, `azurespeechsetup`.
+Phase 3 (conversational Brain) done and live-tested end-to-end against real Claude, the real VA account, and the real Azure memory store: discovery-style requests ("something like the Mary Beard book I read") correctly cluster results and use Claude's own book knowledge before checking catalogue availability; loan-cap awareness steers additions to the request list when the bookshelf is full; removal correctly asks for confirmation first; `--dry-run` genuinely protects the real account; and stated preferences are recalled correctly in a brand-new process run. See docs/decisions.md's Phase 3 row for the two real Claude API wire-format bugs found and fixed along the way.
+
+`Bookworm.Console` is a working CLI test harness: `login`, `search`, `bookshelf`, `add`, `remove`, `requestlist`, `addrequest`, `subscriptions`, `subscribe`, `history`, `raw`, `say`, `speechtest`/`speechtest2`/`speechtest3`, `azurespeechsetup`, `claudesetup`, `memorysetup`, `listcontainers`, `chat [--dry-run]`.
 
 ## Solution layout
 
