@@ -6,7 +6,7 @@ See [docs/decisions.md](docs/decisions.md) for the full implementation plan, arc
 
 ## Status
 
-Phase 0 — project scaffolding in progress.
+Phase 1 mostly complete — the VA Library API client (`Bookworm.Core.Library`) is implemented and verified against a real account for login, search, bookshelf (list/add), request list, and subscriptions. Remaining gaps: the bookshelf item download endpoint hasn't been found yet, remove-from-bookshelf/request-list/subscription aren't click-verified, and history parsing isn't implemented (VA serves it as HTML, not JSON). See [docs/va-endpoints.md](docs/va-endpoints.md) for full details. `Bookworm.Console` is a working CLI test harness (`login`, `search`, `bookshelf`, `add`, `remove`, `requestlist`, `addrequest`, `subscriptions`, `subscribe`, `history`, `raw`).
 
 ## Solution layout
 
