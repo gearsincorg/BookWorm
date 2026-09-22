@@ -12,6 +12,8 @@ Phase 2 (speech pipeline) done — TTS via legacy SAPI works fine; STT needed es
 
 Phase 3 (conversational Brain) done and live-tested end-to-end against real Claude, the real VA account, and the real Azure memory store: discovery-style requests ("something like the Mary Beard book I read") correctly cluster results and use Claude's own book knowledge before checking catalogue availability; loan-cap awareness steers additions to the request list when the bookshelf is full; removal correctly asks for confirmation first; `--dry-run` genuinely protects the real account; and stated preferences are recalled correctly in a brand-new process run. See docs/decisions.md's Phase 3 row for the two real Claude API wire-format bugs found and fixed along the way.
 
+Phase 4 (full integration) done — `Bookworm.Windows` is now a real, working push-to-talk voice app: press and hold Talk (or press Space/Enter), speak, and Bookworm answers out loud, wiring together everything from Phases 1–3. Live-tested by voice: "worked well, good comprehension and replies." Not yet done: a first-run setup UI (currently reuses whatever's already configured via `Bookworm.Console`'s setup commands) and a real NVDA screen-reader pass — both are Phase 5.
+
 `Bookworm.Console` is a working CLI test harness: `login`, `search`, `bookshelf`, `add`, `remove`, `requestlist`, `addrequest`, `subscriptions`, `subscribe`, `history`, `raw`, `say`, `speechtest`/`speechtest2`/`speechtest3`, `azurespeechsetup`, `claudesetup`, `memorysetup`, `listcontainers`, `chat [--dry-run]`.
 
 ## Solution layout
