@@ -13,10 +13,20 @@ namespace Bookworm.Core.Auth;
 public sealed class VaSessionManager(IVaLibraryClient inner, ICredentialStore credentialStore) : IVaLibraryClient
 {
     private static readonly TimeSpan MinInterval = TimeSpan.FromMilliseconds(300);
+    private static readonly TimeSpan[] TransientRetryDelays = [TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(1500)];
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private DateTimeOffset _lastCallAt = DateTimeOffset.MinValue;
     private bool _authenticated;
+
+    // Network blips and VA-side 5xx errors are worth a couple of retries; client errors (4xx) and the
+    // loan-cap exception are not — retrying those just wastes time on a failure that won't change.
+    private static bool IsTransient(Exception ex) => ex switch
+    {
+        HttpRequestException => true,
+        VaRequestFailedException { StatusCode: null or >= 500 } => true,
+        _ => false,
+    };
 
     private async Task PaceAsync(CancellationToken ct)
     {
@@ -54,15 +64,24 @@ public sealed class VaSessionManager(IVaLibraryClient inner, ICredentialStore cr
     {
         await PaceAsync(ct);
         await EnsureAuthenticatedAsync(ct);
-        try
+
+        var reAuthUsed = false;
+        for (var attempt = 0; ; attempt++)
         {
-            return await action(ct);
-        }
-        catch (VaSessionExpiredException)
-        {
-            _authenticated = false;
-            await EnsureAuthenticatedAsync(ct);
-            return await action(ct);
+            try
+            {
+                return await action(ct);
+            }
+            catch (VaSessionExpiredException) when (!reAuthUsed)
+            {
+                reAuthUsed = true;
+                _authenticated = false;
+                await EnsureAuthenticatedAsync(ct);
+            }
+            catch (Exception ex) when (IsTransient(ex) && attempt < TransientRetryDelays.Length)
+            {
+                await Task.Delay(TransientRetryDelays[attempt], ct);
+            }
         }
     }
 

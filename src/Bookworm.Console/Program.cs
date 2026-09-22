@@ -85,6 +85,9 @@ try
         case "chat":
             await ChatAsync(dryRun: args.Contains("--dry-run", StringComparer.OrdinalIgnoreCase));
             break;
+        case "seedsecrets":
+            await SeedSecretsAsync(args);
+            break;
         default:
             PrintUsage();
             return 1;
@@ -174,6 +177,9 @@ static void PrintUsage()
           memorysetup                          Enter and save your Azure Storage connection string + container
           listcontainers                       Debug: list containers in the configured Azure Storage account
           chat [--dry-run]                     Typed conversational Brain harness (Phase 3) — the real thing
+          seedsecrets --claude-key=... --speech-key=... --speech-region=... [--storage-connection=... --storage-container=...]
+                                                Non-interactive: for the installer to pre-seed the developer's
+                                                own accounts on an end user's machine. Never used interactively.
         """);
 }
 
@@ -398,6 +404,32 @@ async Task ChatAsync(bool dryRun)
     Console.WriteLine("Memory saved. Bye.");
 
     (brain as IDisposable)?.Dispose();
+}
+
+async Task SeedSecretsAsync(string[] rawArgs)
+{
+    string? NamedArg(string name)
+    {
+        var prefix = $"--{name}=";
+        var match = rawArgs.FirstOrDefault(a => a.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+        return match?[prefix.Length..];
+    }
+
+    var claudeKey = NamedArg("claude-key") ?? throw new ArgumentException("Missing --claude-key");
+    var speechKey = NamedArg("speech-key") ?? throw new ArgumentException("Missing --speech-key");
+    var speechRegion = NamedArg("speech-region") ?? throw new ArgumentException("Missing --speech-region");
+    var storageConnection = NamedArg("storage-connection");
+    var storageContainer = NamedArg("storage-container");
+
+    await credentialStore.SetSecretAsync(CredentialKeys.AnthropicApiKey, claudeKey, CancellationToken.None);
+    await new AzureSpeechCredentials { Key = speechKey, Region = speechRegion }.SaveAsync(credentialStore, CancellationToken.None);
+
+    if (storageConnection is not null && storageContainer is not null)
+    {
+        await new AzureMemoryStoreCredentials { ConnectionString = storageConnection, ContainerName = storageContainer }.SaveAsync(credentialStore, CancellationToken.None);
+    }
+
+    Console.WriteLine("Seeded developer-owned credentials (Anthropic, Azure Speech, Azure Storage) into this machine's Credential Manager.");
 }
 
 static LibraryItemType ParseType(string? typeArg) => typeArg?.ToLowerInvariant() switch

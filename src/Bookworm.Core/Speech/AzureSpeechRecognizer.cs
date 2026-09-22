@@ -12,16 +12,33 @@ namespace Bookworm.Core.Speech;
 /// </summary>
 public sealed class AzureSpeechRecognizer : ISpeechRecognizer
 {
-    private readonly SpeechRecognizer _recognizer;
+    private readonly SpeechConfig _config;
     private readonly StringBuilder _accumulated = new();
+
+    private SpeechRecognizer? _recognizer;
     private Task? _startTask;
 
     public AzureSpeechRecognizer(AzureSpeechCredentials credentials, string language = "en-AU")
     {
-        var config = SpeechConfig.FromSubscription(credentials.Key, credentials.Region);
-        config.SpeechRecognitionLanguage = language;
-        _recognizer = new SpeechRecognizer(config);
-        _recognizer.Recognized += (_, e) =>
+        _config = SpeechConfig.FromSubscription(credentials.Key, credentials.Region);
+        _config.SpeechRecognitionLanguage = language;
+    }
+
+    public void StartListening()
+    {
+        lock (_accumulated)
+        {
+            _accumulated.Clear();
+        }
+
+        // A fresh SpeechRecognizer per turn, not a reused one — calling StartContinuousRecognitionAsync
+        // again too soon after a StopContinuousRecognitionAsync on the *same* instance can race the SDK's
+        // internal session teardown (SPXERR_START_RECOGNIZING_INVALID_STATE_TRANSITION), which only
+        // surfaced once "barge in" made rapid stop-then-start-again a real path (see PushToTalkController).
+        // Recreating the object sidesteps that race entirely rather than trying to time around it.
+        _recognizer?.Dispose();
+        var recognizer = new SpeechRecognizer(_config);
+        recognizer.Recognized += (_, e) =>
         {
             if (e.Result.Reason == ResultReason.RecognizedSpeech && !string.IsNullOrWhiteSpace(e.Result.Text))
             {
@@ -35,30 +52,30 @@ public sealed class AzureSpeechRecognizer : ISpeechRecognizer
                 }
             }
         };
-    }
+        _recognizer = recognizer;
 
-    public void StartListening()
-    {
-        lock (_accumulated)
-        {
-            _accumulated.Clear();
-        }
         // Tracked, not fire-and-forget — see WinRtSpeechRecognizer for why this ordering matters.
-        _startTask = _recognizer.StartContinuousRecognitionAsync();
+        _startTask = recognizer.StartContinuousRecognitionAsync();
     }
 
     public async Task<string> StopListeningAsync(CancellationToken ct = default)
     {
+        var recognizer = _recognizer;
+        if (recognizer is null)
+        {
+            return "";
+        }
+
         if (_startTask is not null)
         {
             await _startTask;
         }
-        await _recognizer.StopContinuousRecognitionAsync();
+        await recognizer.StopContinuousRecognitionAsync();
         lock (_accumulated)
         {
             return _accumulated.ToString().Trim();
         }
     }
 
-    public void Dispose() => _recognizer.Dispose();
+    public void Dispose() => _recognizer?.Dispose();
 }

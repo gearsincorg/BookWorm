@@ -6,7 +6,9 @@
         xmlns:local="clr-namespace:Bookworm.Windows"
         mc:Ignorable="d"
         Title="Bookworm" Height="520" Width="520"
-        FocusManager.FocusedElement="{Binding ElementName=TalkButton}">
+        FocusManager.FocusedElement="{Binding ElementName=TalkButton}"
+        PreviewKeyDown="Window_PreviewKeyDown"
+        PreviewKeyUp="Window_PreviewKeyUp">
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -18,11 +20,9 @@
                 Content="Talk"
                 Height="90" FontSize="28"
                 AutomationProperties.Name="Talk"
-                AutomationProperties.HelpText="Press and hold, or press Space or Enter, to speak to Bookworm."
+                AutomationProperties.HelpText="Press and hold, or press Space or Enter anywhere in this window, to speak to Bookworm."
                 PreviewMouseLeftButtonDown="TalkButton_PreviewMouseLeftButtonDown"
-                PreviewMouseLeftButtonUp="TalkButton_PreviewMouseLeftButtonUp"
-                PreviewKeyDown="TalkButton_PreviewKeyDown"
-                PreviewKeyUp="TalkButton_PreviewKeyUp"/>
+                PreviewMouseLeftButtonUp="TalkButton_PreviewMouseLeftButtonUp"/>
 
         <TextBlock x:Name="StatusTextBlock" Grid.Row="1"
                    Margin="0,14,0,14" FontSize="16"
@@ -31,7 +31,9 @@
 
         <ListBox Grid.Row="2"
                  ItemsSource="{Binding Transcript}"
-                 AutomationProperties.Name="Conversation transcript">
+                 AutomationProperties.Name="Conversation transcript"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 HorizontalContentAlignment="Stretch">
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <TextBlock TextWrapping="Wrap" Margin="0,4,0,4">

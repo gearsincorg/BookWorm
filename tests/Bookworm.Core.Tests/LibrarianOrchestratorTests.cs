@@ -74,6 +74,57 @@ public class LibrarianOrchestratorTests
     }
 
     [Fact]
+    public async Task FailedTurn_RollsBackHistory_AndDoesNotPoisonFutureTurns()
+    {
+        // Regression test for a real bug: a turn that throws mid-way (e.g. a Claude API error) used to
+        // leave a dangling tool_use/malformed message in the shared history, so every subsequent turn
+        // failed the same way for the rest of the session. It also must not leave the turn gate stuck.
+        var client = MakeClientMock();
+        var brain = new Mock<IBrain>();
+        brain.SetupSequence(b => b.RespondAsync(It.IsAny<ConversationContext>(), It.IsAny<IReadOnlyList<ToolDefinition>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("simulated Claude API failure"))
+            .ReturnsAsync(new BrainTurnResult { Content = [ContentBlock.OfText("All good now.")] });
+
+        var orchestrator = new LibrarianOrchestrator(brain.Object, new ToolCallExecutor(client.Object), client.Object, new InMemoryMemoryStore());
+        await orchestrator.InitializeAsync();
+
+        var countBefore = orchestrator.MessageCountForTests;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => orchestrator.ProcessUserUtteranceAsync("first attempt"));
+        Assert.Equal(countBefore, orchestrator.MessageCountForTests); // rolled back, not left dangling
+
+        var response = await orchestrator.ProcessUserUtteranceAsync("second attempt");
+        Assert.Equal("All good now.", response);
+    }
+
+    [Fact]
+    public async Task ConcurrentTurns_AreSerialized_NotInterleaved()
+    {
+        // Regression test: two turns racing on the same ConversationContext used to be possible (e.g.
+        // the user speaking again before the previous reply finished), interleaving messages and
+        // breaking Claude's tool_use/tool_result pairing requirement for the rest of the session.
+        var client = MakeClientMock();
+        var brain = new Mock<IBrain>();
+        brain.Setup(b => b.RespondAsync(It.IsAny<ConversationContext>(), It.IsAny<IReadOnlyList<ToolDefinition>>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                await Task.Delay(50); // simulate a slow API call, giving a concurrent call a chance to race
+                return new BrainTurnResult { Content = [ContentBlock.OfText("reply")] };
+            });
+
+        var orchestrator = new LibrarianOrchestrator(brain.Object, new ToolCallExecutor(client.Object), client.Object, new InMemoryMemoryStore());
+        await orchestrator.InitializeAsync();
+
+        var countBefore = orchestrator.MessageCountForTests;
+        var first = orchestrator.ProcessUserUtteranceAsync("question one");
+        var second = orchestrator.ProcessUserUtteranceAsync("question two");
+        await Task.WhenAll(first, second);
+
+        // Each turn adds exactly one user message + one assistant message; serialized execution means
+        // the count is exactly 4 more, never corrupted by interleaving.
+        Assert.Equal(countBefore + 4, orchestrator.MessageCountForTests);
+    }
+
+    [Fact]
     public async Task Memory_PersistsAcrossOrchestratorInstances_ViaSharedStore()
     {
         var client = MakeClientMock();

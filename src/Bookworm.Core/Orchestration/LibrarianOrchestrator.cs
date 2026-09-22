@@ -52,6 +52,9 @@ public sealed class LibrarianOrchestrator(IBrain brain, ToolCallExecutor toolExe
     private ConversationContext? _context;
     private BookwormMemory _memory = new();
     private string? _memoryEtag;
+    private readonly SemaphoreSlim _turnGate = new(1, 1);
+
+    internal int MessageCountForTests => _context?.Messages.Count ?? 0;
 
     public async Task InitializeAsync(CancellationToken ct = default)
     {
@@ -88,28 +91,51 @@ public sealed class LibrarianOrchestrator(IBrain brain, ToolCallExecutor toolExe
             throw new InvalidOperationException("Call InitializeAsync before processing an utterance.");
         }
 
-        _context.Messages.Add(BrainMessage.User(transcript));
-
-        for (var round = 0; round < MaxToolRoundTrips; round++)
+        // Claude's API requires every tool_use to be followed immediately by its tool_result — if two
+        // turns ran concurrently (e.g. the user spoke again before the previous reply finished) they'd
+        // interleave messages and permanently corrupt that invariant for the rest of the session. This
+        // gate serializes turns so a second call simply waits rather than racing the first.
+        await _turnGate.WaitAsync(ct);
+        try
         {
-            var result = await brain.RespondAsync(_context, ToolDefinitions.All, ct);
-            _context.Messages.Add(BrainMessage.Assistant(result.Content));
+            var checkpoint = _context.Messages.Count;
+            _context.Messages.Add(BrainMessage.User(transcript));
 
-            var toolUses = result.ToolUses.ToList();
-            if (toolUses.Count == 0)
+            try
             {
-                return result.TextOnly;
-            }
+                for (var round = 0; round < MaxToolRoundTrips; round++)
+                {
+                    var result = await brain.RespondAsync(_context, ToolDefinitions.All, ct);
+                    _context.Messages.Add(BrainMessage.Assistant(result.Content));
 
-            var toolResults = new List<ContentBlock>();
-            foreach (var call in toolUses)
-            {
-                toolResults.Add(await toolExecutor.ExecuteAsync(call, _memory, ct));
+                    var toolUses = result.ToolUses.ToList();
+                    if (toolUses.Count == 0)
+                    {
+                        return result.TextOnly;
+                    }
+
+                    var toolResults = new List<ContentBlock>();
+                    foreach (var call in toolUses)
+                    {
+                        toolResults.Add(await toolExecutor.ExecuteAsync(call, _memory, ct));
+                    }
+                    _context.Messages.Add(BrainMessage.User(toolResults));
+                }
+
+                return "Sorry, that turned into more steps than I can handle in one go — could you try asking again, maybe more specifically?";
             }
-            _context.Messages.Add(BrainMessage.User(toolResults));
+            catch
+            {
+                // Roll back this turn's partial history rather than leaving a dangling tool_use (or any
+                // other malformed tail) that would break every subsequent turn for the rest of the session.
+                _context.Messages.RemoveRange(checkpoint, _context.Messages.Count - checkpoint);
+                throw;
+            }
         }
-
-        return "Sorry, that turned into more steps than I can handle in one go — could you try asking again, maybe more specifically?";
+        finally
+        {
+            _turnGate.Release();
+        }
     }
 
     public Task SaveMemoryAsync(CancellationToken ct = default) => memoryStore.SaveAsync(_memory, _memoryEtag, ct);
