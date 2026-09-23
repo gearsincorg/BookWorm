@@ -88,23 +88,49 @@ public partial class App : Application
 
         ISpeechRecognizer recognizer = new AzureSpeechRecognizer(speechCredentials);
         ISpeechSynthesizer synthesizer = new SapiSpeechSynthesizer();
-        var controller = new PushToTalkController(recognizer, synthesizer, orchestrator, _logger);
+        var thinkingSounds = new ThinkingSoundPlayer();
+        var controller = new PushToTalkController(recognizer, synthesizer, orchestrator, _logger, thinkingSounds);
 
         var viewModel = new MainViewModel();
         var mainWindow = new MainWindow(viewModel, controller);
         mainWindow.Show();
 
         viewModel.StatusText = "Initializing — loading your bookshelf and reading profile…";
+
+        // Same reasoning as during a conversational turn: loading the bookshelf/history/memory can take
+        // a few seconds, and without this there's silence the whole time with no confirmation anything
+        // is happening at all — worse here, since it's the very first thing the app ever does.
+        using var startupThinkingCts = new CancellationTokenSource();
+        var startupThinkingTask = thinkingSounds.PlayUntilCancelledAsync(startupThinkingCts.Token);
+        var startedUpOk = false;
         try
         {
             await orchestrator.InitializeAsync();
             viewModel.StatusText = "Ready. Press and hold Talk, or press Space or Enter, to speak.";
             _logger.Info("Startup complete — ready.");
+            startedUpOk = true;
         }
         catch (Exception ex)
         {
             _logger.Error("Failed during orchestrator initialization.", ex);
             viewModel.StatusText = $"Couldn't start up: {ex.Message}";
+        }
+        finally
+        {
+            // Stop on both the success and failure paths — otherwise a failed startup leaves it playing
+            // indefinitely with nothing to announce.
+            startupThinkingCts.Cancel();
+            await startupThinkingTask;
+        }
+
+        if (startedUpOk)
+        {
+            // Deliberate, explicit exception to the "no proactive narration" rule (see
+            // LibrarianOrchestrator's persona prompt) — that rule is about not volunteering status during
+            // a conversation; this is the one moment before any conversation exists where there's no
+            // other way for someone who can't see the status text to know the app is ready and how to
+            // use it. Spoken directly, not via the Brain — fixed wording, no need for a Claude call.
+            await synthesizer.SpeakAsync("Welcome to the Bookworm. Press and hold the spacebar, or the Talk button, to ask a question.");
         }
     }
 }

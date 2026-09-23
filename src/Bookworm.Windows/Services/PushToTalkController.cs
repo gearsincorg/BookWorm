@@ -25,7 +25,7 @@ public enum ConversationState
 /// and rollback-on-failure handle the case where the cancelled turn was mid-way through mutating shared
 /// conversation state.
 /// </summary>
-public sealed class PushToTalkController(ISpeechRecognizer recognizer, ISpeechSynthesizer synthesizer, LibrarianOrchestrator orchestrator, IAppLogger logger)
+public sealed class PushToTalkController(ISpeechRecognizer recognizer, ISpeechSynthesizer synthesizer, LibrarianOrchestrator orchestrator, IAppLogger logger, ThinkingSoundPlayer thinkingSounds)
 {
     public event Action<ConversationState>? StateChanged;
     public event Action<string, bool>? TranscriptAdded; // (text, isUser)
@@ -97,6 +97,12 @@ public sealed class PushToTalkController(ISpeechRecognizer recognizer, ISpeechSy
         TranscriptAdded?.Invoke(transcript, true);
         StateChanged?.Invoke(ConversationState.Thinking);
 
+        // Runs alongside the round trip, not sequentially — a multi-tool-call Claude turn can take
+        // 10-20+ seconds, and without this there's nothing but silence the whole time. Stopped the
+        // instant the real response is ready (in finally below), not left to finish its current cycle.
+        using var thinkingCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var thinkingSoundTask = thinkingSounds.PlayUntilCancelledAsync(thinkingCts.Token);
+
         string response;
         try
         {
@@ -113,6 +119,11 @@ public sealed class PushToTalkController(ISpeechRecognizer recognizer, ISpeechSy
             // API error body did exactly this once). Full detail goes to the log for the developer only.
             logger.Error($"Failed processing utterance: {transcript}", ex);
             response = "Sorry, I ran into a technical problem with that. Could you try again?";
+        }
+        finally
+        {
+            thinkingCts.Cancel();
+            await thinkingSoundTask;
         }
 
         TranscriptAdded?.Invoke(response, false);
