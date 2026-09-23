@@ -30,12 +30,17 @@ public class ToolCallExecutorTests
             .Returns(Task.CompletedTask);
 
         var executor = new ToolCallExecutor(client.Object);
+        var memory = new BookwormMemory();
         var result = await executor.ExecuteAsync(
-            ToolUse("add_to_bookshelf", """{"bookshareId":"R123","format":"DAISY_Audio_Human"}"""),
-            new BookwormMemory());
+            ToolUse("add_to_bookshelf", """{"bookshareId":"R123","format":"DAISY_Audio_Human","title":"Azincourt","author":"Cornwell, Bernard"}"""),
+            memory);
 
         Assert.False(result.IsError);
         client.Verify(c => c.AddToBookshelfAsync("R123", "DAISY_Audio_Human", LibraryItemType.Book, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Single(memory.ReadingHistory);
+        Assert.Equal("Azincourt", memory.ReadingHistory[0].Title);
+        Assert.Equal("Cornwell, Bernard", memory.ReadingHistory[0].Author);
+        Assert.Null(memory.ReadingHistory[0].DateRemoved);
     }
 
     [Fact]
@@ -46,7 +51,7 @@ public class ToolCallExecutorTests
 
         var executor = new ToolCallExecutor(client.Object);
         var result = await executor.ExecuteAsync(
-            ToolUse("add_to_bookshelf", """{"bookshareId":"R123","format":"DAISY_Audio_Human"}"""),
+            ToolUse("add_to_bookshelf", """{"bookshareId":"R123","format":"DAISY_Audio_Human","title":"Azincourt"}"""),
             new BookwormMemory());
 
         Assert.True(result.IsError);
@@ -61,12 +66,14 @@ public class ToolCallExecutorTests
         client.Setup(c => c.GetBookshelfAsync(It.IsAny<CancellationToken>())).ReturnsAsync(MakeSnapshot(5));
 
         var executor = new ToolCallExecutor(client.Object, dryRun: true);
+        var memory = new BookwormMemory();
         var result = await executor.ExecuteAsync(
-            ToolUse("add_to_bookshelf", """{"bookshareId":"R123","format":"DAISY_Audio_Human"}"""),
-            new BookwormMemory());
+            ToolUse("add_to_bookshelf", """{"bookshareId":"R123","format":"DAISY_Audio_Human","title":"Azincourt"}"""),
+            memory);
 
         Assert.False(result.IsError);
         Assert.Contains("dryRun", result.Content);
+        Assert.Empty(memory.ReadingHistory); // dry-run must not log to reading history either
         client.Verify(c => c.AddToBookshelfAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<LibraryItemType>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -119,5 +126,92 @@ public class ToolCallExecutorTests
         var result = await executor.ExecuteAsync(ToolUse("add_to_request_list", "{}"), new BookwormMemory());
 
         Assert.True(result.IsError);
+    }
+
+    [Fact]
+    public async Task AddToBookshelf_FlagsNewAuthor_ThenNotAfterRecorded()
+    {
+        var client = new Mock<IVaLibraryClient>();
+        client.Setup(c => c.GetBookshelfAsync(It.IsAny<CancellationToken>())).ReturnsAsync(MakeSnapshot(5));
+        var executor = new ToolCallExecutor(client.Object);
+        var memory = new BookwormMemory();
+
+        var first = await executor.ExecuteAsync(
+            ToolUse("add_to_bookshelf", """{"bookshareId":"R1","format":"DAISY_Audio_Human","title":"Azincourt","author":"Cornwell, Bernard"}"""),
+            memory);
+        Assert.Contains("\"authorAlreadyInPreferredAuthors\":false", first.Content);
+
+        await executor.ExecuteAsync(ToolUse("add_preferred_author", """{"authorName":"Cornwell, Bernard","isFavorite":true}"""), memory);
+
+        var second = await executor.ExecuteAsync(
+            ToolUse("add_to_bookshelf", """{"bookshareId":"R2","format":"DAISY_Audio_Human","title":"Waterloo","author":"Cornwell, Bernard"}"""),
+            memory);
+        Assert.Contains("\"authorAlreadyInPreferredAuthors\":true", second.Content);
+    }
+
+    [Fact]
+    public async Task RemoveFromBookshelf_MarksMatchingReadingHistoryEntryAsRemoved()
+    {
+        var client = new Mock<IVaLibraryClient>();
+        client.Setup(c => c.GetBookshelfAsync(It.IsAny<CancellationToken>())).ReturnsAsync(MakeSnapshot(5));
+        var executor = new ToolCallExecutor(client.Object);
+        var memory = new BookwormMemory();
+
+        await executor.ExecuteAsync(
+            ToolUse("add_to_bookshelf", """{"bookshareId":"R1","format":"DAISY_Audio_Human","title":"Azincourt"}"""),
+            memory);
+
+        var result = await executor.ExecuteAsync(
+            ToolUse("remove_from_bookshelf", """{"activeTitleId":"999","bookshareId":"R1"}"""),
+            memory);
+
+        Assert.False(result.IsError);
+        Assert.NotNull(memory.ReadingHistory[0].DateRemoved);
+    }
+
+    [Fact]
+    public async Task RateBook_SetsRating_FindableViaSearch()
+    {
+        var client = new Mock<IVaLibraryClient>();
+        client.Setup(c => c.GetBookshelfAsync(It.IsAny<CancellationToken>())).ReturnsAsync(MakeSnapshot(5));
+        var executor = new ToolCallExecutor(client.Object);
+        var memory = new BookwormMemory();
+
+        await executor.ExecuteAsync(
+            ToolUse("add_to_bookshelf", """{"bookshareId":"R1","format":"DAISY_Audio_Human","title":"Azincourt","author":"Cornwell, Bernard"}"""),
+            memory);
+
+        var rateResult = await executor.ExecuteAsync(ToolUse("rate_book", """{"title":"Azincourt","rating":5}"""), memory);
+        Assert.False(rateResult.IsError);
+        Assert.Equal(5, memory.ReadingHistory[0].Rating);
+
+        var searchResult = await executor.ExecuteAsync(ToolUse("search_reading_history", """{"query":"Cornwell"}"""), memory);
+        Assert.Contains("Azincourt", searchResult.Content);
+    }
+
+    [Fact]
+    public async Task RateBook_OutOfRange_ReturnsError()
+    {
+        var client = new Mock<IVaLibraryClient>();
+        var executor = new ToolCallExecutor(client.Object);
+        var memory = new BookwormMemory();
+        memory.ReadingHistory.Add(new ReadingHistoryEntry { Title = "Azincourt", DateAdded = DateTimeOffset.UtcNow });
+
+        var result = await executor.ExecuteAsync(ToolUse("rate_book", """{"title":"Azincourt","rating":9}"""), memory);
+
+        Assert.True(result.IsError);
+    }
+
+    [Fact]
+    public async Task AddPreferredGenre_DoesNotDuplicate()
+    {
+        var client = new Mock<IVaLibraryClient>();
+        var executor = new ToolCallExecutor(client.Object);
+        var memory = new BookwormMemory();
+
+        await executor.ExecuteAsync(ToolUse("add_preferred_genre", """{"genre":"Historical Fiction"}"""), memory);
+        await executor.ExecuteAsync(ToolUse("add_preferred_genre", """{"genre":"historical fiction"}"""), memory);
+
+        Assert.Single(memory.PreferredGenres);
     }
 }

@@ -43,7 +43,7 @@ public class LibrarianOrchestratorTests
             .Returns(Task.CompletedTask);
 
         var brain = new StubBrain();
-        brain.EnqueueToolUse("t1", "add_to_bookshelf", JsonDocument.Parse("""{"bookshareId":"R123","format":"DAISY_Audio_Human"}""").RootElement);
+        brain.EnqueueToolUse("t1", "add_to_bookshelf", JsonDocument.Parse("""{"bookshareId":"R123","format":"DAISY_Audio_Human","title":"Azincourt"}""").RootElement);
         brain.EnqueueText("Done — added to your bookshelf.");
 
         var orchestrator = new LibrarianOrchestrator(brain, new ToolCallExecutor(client.Object), client.Object, new InMemoryMemoryStore());

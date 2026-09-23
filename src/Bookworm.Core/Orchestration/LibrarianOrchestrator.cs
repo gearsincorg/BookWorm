@@ -51,6 +51,18 @@ public sealed class LibrarianOrchestrator(IBrain brain, ToolCallExecutor toolExe
         9. Use remember_preference whenever the user states a preference outside a normal search request
            (favorite genres/authors, formats, things to avoid), and recall_preferences when it would help
            answer the current request.
+        10. After a successful add_to_bookshelf, check its result for two things and ask about both
+           together in one natural follow-up (don't interrupt with two separate questions):
+           a. If authorAlreadyInPreferredAuthors is false, ask whether this author should be added as a
+              known/preferred author, and whether they're a favorite — then call add_preferred_author
+              with the answer. Only ask once per author; never ask again once they're already recorded.
+           b. Using your own knowledge of the title/author, identify the likely genre. If it is not
+              already in the result's currentPreferredGenres, ask if they'd like it added — then call
+              add_preferred_genre only if they agree. Never add a genre without asking first.
+        11. Use search_reading_history to check whether a specific title has been read/borrowed before
+           (it covers everything ever added, not just what's currently on the bookshelf) and rate_book
+           whenever the user wants to rate something — this works for titles no longer on the shelf too,
+           at any time, not only right after finishing.
         """;
 
     private ConversationContext? _context;
@@ -76,7 +88,19 @@ public sealed class LibrarianOrchestrator(IBrain brain, ToolCallExecutor toolExe
     private static string BuildSystemPrompt(object profile, BookwormMemory memory)
     {
         var profileJson = JsonSerializer.Serialize(profile);
-        var memoryJson = JsonSerializer.Serialize(new { memory.ExplicitPreferences, memory.ConversationNotes, memory.LastSessionSummary });
+        // ReadingHistory deliberately excluded here — it can grow large over time and is searchable via
+        // search_reading_history instead; PreferredAuthors/PreferredGenres stay small and are useful as
+        // baseline context from turn one, though add_to_bookshelf's own result is still the authoritative,
+        // live check within a session (this snapshot goes stale the moment either list changes).
+        var memoryJson = JsonSerializer.Serialize(new
+        {
+            memory.ExplicitPreferences,
+            memory.ConversationNotes,
+            memory.LastSessionSummary,
+            memory.PreferredAuthors,
+            memory.PreferredGenres,
+            readingHistoryEntryCount = memory.ReadingHistory.Count,
+        });
         return $"""
             {PersonaPrompt}
 
