@@ -87,7 +87,10 @@ public partial class App : Application
         var orchestrator = new LibrarianOrchestrator(brain, toolExecutor, vaClient, memoryStore);
 
         ISpeechRecognizer recognizer = new AzureSpeechRecognizer(speechCredentials);
-        ISpeechSynthesizer synthesizer = new SapiSpeechSynthesizer();
+        ISpeechSynthesizer synthesizer = new FallbackSpeechSynthesizer(
+            new AzureSpeechSynthesizer(speechCredentials),
+            new SapiSpeechSynthesizer(),
+            ex => _logger.Warn($"Azure TTS failed, falling back to SAPI: {ex.Message}"));
         var thinkingSounds = new ThinkingSoundPlayer();
         var controller = new PushToTalkController(recognizer, synthesizer, orchestrator, _logger, thinkingSounds);
 
