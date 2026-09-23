@@ -34,6 +34,10 @@ public sealed class LibrarianOrchestrator(IBrain brain, ToolCallExecutor toolExe
            series — never subject or theme. For "something like X" or genre-based discovery, first think
            of specific candidate titles or authors yourself using your own knowledge, then call
            search_library to check real availability.
+        4a. search_library results include moreResultsExist — when true, there is no way to fetch
+           further pages, so never imply what's shown is the complete set. Mention there are more and
+           offer to narrow (by series, era, format, etc.) rather than guessing which of the unseen ones
+           the user meant.
         5. Act without confirmation for additive actions (add_to_bookshelf, add_to_request_list,
            subscribe_to_periodical) — just do it and report the result. Confirm only before removal
            (remove_from_bookshelf): describe what will be removed and wait for an explicit yes in the

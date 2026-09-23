@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.Windows;
 using System.Windows.Input;
 using Bookworm.Windows.Services;
@@ -6,12 +7,14 @@ using Bookworm.Windows.ViewModels;
 namespace Bookworm.Windows;
 
 /// <summary>
-/// Interaction logic for MainWindow.xaml. Push-to-talk works three ways: mouse press/release on the
-/// Talk button (true press-and-hold), Space/Enter anywhere in the window regardless of which control
-/// currently has keyboard focus (handled at the Window level via tunneling Preview events, not on the
-/// button itself), or the global hotkey (Ctrl+Alt+B) from anywhere on the desktop — the latter two are a
-/// press/press toggle rather than press-and-hold, since holding a key (or a system-wide hotkey, which has
-/// no separate release event at all) down for a variable-length recording isn't practical.
+/// Interaction logic for MainWindow.xaml. Push-to-talk works three ways:
+/// - Mouse press/release on the Talk button (true press-and-hold).
+/// - Space/Enter anywhere in the window (true press-and-hold too — WPF delivers real KeyDown/KeyUp
+///   pairs for a focused-window key, so this mirrors the mouse exactly), regardless of which control
+///   currently has focus (handled at the Window level via tunneling Preview events, not on the button).
+/// - The global hotkey (Ctrl+Alt+B) from anywhere on the desktop — this one is a press/press *toggle*,
+///   not press-and-hold, because Win32's RegisterHotKey has no separate release event at all to hold
+///   against; that's an OS API limitation, not a design choice.
 /// </summary>
 public partial class MainWindow : Window
 {
@@ -27,6 +30,19 @@ public partial class MainWindow : Window
 
         _controller.StateChanged += viewModel.SetState;
         _controller.TranscriptAdded += viewModel.AddTranscript;
+
+        // Keep the transcript scrolled to the newest entry — otherwise it just grows downward off-screen.
+        // ScrollIntoView has to run after layout has caught up with the just-added item (it's raised
+        // synchronously from Add, before WPF has generated a container for the new item), so this is
+        // deferred to ContextIdle rather than called directly in the handler.
+        viewModel.Transcript.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == NotifyCollectionChangedAction.Add && e.NewItems is { Count: > 0 })
+            {
+                var newest = e.NewItems[^1]!;
+                Dispatcher.BeginInvoke(() => TranscriptListBox.ScrollIntoView(newest), System.Windows.Threading.DispatcherPriority.ContextIdle);
+            }
+        };
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -52,11 +68,11 @@ public partial class MainWindow : Window
         base.OnClosed(e);
     }
 
-    private async void TalkButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => BeginTalk();
+    private void TalkButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => BeginTalk();
 
     private async void TalkButton_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e) => await EndTalkAsync();
 
-    private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
+    private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key != Key.Space && e.Key != Key.Enter)
         {
@@ -66,18 +82,20 @@ public partial class MainWindow : Window
 
         if (e.IsRepeat)
         {
-            return; // holding the key sends repeated KeyDown events — only the first one should act
+            return; // holding the key sends repeated KeyDown events — only the first counts as "pressed"
         }
 
-        await ToggleTalkAsync();
+        BeginTalk();
     }
 
-    private void Window_PreviewKeyUp(object sender, KeyEventArgs e)
+    private async void Window_PreviewKeyUp(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Space || e.Key == Key.Enter)
+        if (e.Key != Key.Space && e.Key != Key.Enter)
         {
-            e.Handled = true;
+            return;
         }
+        e.Handled = true;
+        await EndTalkAsync();
     }
 
     private async Task ToggleTalkAsync()

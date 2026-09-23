@@ -141,7 +141,14 @@ public sealed partial class VaLibraryClient : IVaLibraryClient, IDisposable
         {
             ["keyword"] = query.Keyword,
             ["type"] = query.Type,
-            ["limit"] = "10",
+            // The portal's own UI only ever asks for 10 (its quick-search box has no page control), but
+            // the endpoint honors a much higher limit fine (confirmed live up to 100, no server-side cap
+            // observed) — 50 is a deliberate choice, not the server's ceiling: high enough that the vast
+            // majority of real searches come back complete in one call, while keeping the JSON handed to
+            // Claude bounded rather than uncapped. True pagination (a "next page" tool) isn't implemented
+            // — for anything larger, the Brain sees the real `total` (via ResultSummarizer) and is
+            // expected to narrow the conversation rather than try to enumerate everything.
+            ["limit"] = "50",
             ["format"] = query.Format ?? "",
         };
         using var content = new FormUrlEncodedContent(form);

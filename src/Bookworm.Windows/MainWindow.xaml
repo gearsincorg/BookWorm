@@ -29,7 +29,7 @@
                    Text="{Binding StatusText}"
                    AutomationProperties.LiveSetting="Polite"/>
 
-        <ListBox Grid.Row="2"
+        <ListBox x:Name="TranscriptListBox" Grid.Row="2"
                  ItemsSource="{Binding Transcript}"
                  AutomationProperties.Name="Conversation transcript"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"

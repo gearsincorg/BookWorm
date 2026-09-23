@@ -19,6 +19,11 @@ public static class ResultSummarizer
     private static object SummarizeTab(SearchTabResult tab) => new
     {
         total = tab.Total,
+        shown = tab.Items.Count,
+        // Explicit rather than left for the model to notice by comparing total vs shown — the catalogue
+        // has no further-pages tool, so when this is true the right move is to narrow the conversation
+        // (author/series/era), not to imply the results below are the complete set.
+        moreResultsExist = tab.Items.Count < tab.Total,
         byAuthor = tab.Items
             .GroupBy(i => string.IsNullOrWhiteSpace(i.AuthorNames) ? "(unknown author)" : i.AuthorNames)
             .Select(g => new
