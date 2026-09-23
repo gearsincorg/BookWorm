@@ -34,7 +34,7 @@ public sealed class AzureBlobMemoryStore : IMemoryStore
         return new MemoryLoadResult(memory, response.Value.Details.ETag.ToString());
     }
 
-    public async Task SaveAsync(BookwormMemory memory, string? etag, CancellationToken ct = default)
+    public async Task<string?> SaveAsync(BookwormMemory memory, string? etag, CancellationToken ct = default)
     {
         var json = JsonSerializer.Serialize(memory);
         var options = new BlobUploadOptions();
@@ -42,6 +42,7 @@ public sealed class AzureBlobMemoryStore : IMemoryStore
         {
             options.Conditions = new BlobRequestConditions { IfMatch = new ETag(etag) };
         }
-        await _blob.UploadAsync(BinaryData.FromString(json), options, ct);
+        var response = await _blob.UploadAsync(BinaryData.FromString(json), options, ct);
+        return response.Value.ETag.ToString();
     }
 }

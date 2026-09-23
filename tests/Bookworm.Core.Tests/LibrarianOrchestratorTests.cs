@@ -147,4 +147,28 @@ public class LibrarianOrchestratorTests
 
         Assert.Equal("You've told me you love Roman history.", response);
     }
+
+    [Fact]
+    public async Task SaveMemoryAsync_UsesTheEtagFromThePreviousSave_NotTheOriginalLoad()
+    {
+        // Regression test for a real bug: every successful save changes the store's ETag, but the
+        // orchestrator kept reusing the ETag from Initialize's load on every save — so the second save
+        // in any session always sent a stale precondition and failed (HTTP 412 in the real Azure store).
+        var client = MakeClientMock();
+        var memoryStore = new Mock<IMemoryStore>();
+        memoryStore.Setup(m => m.LoadAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MemoryLoadResult(new BookwormMemory(), "etag-from-load"));
+        memoryStore.SetupSequence(m => m.SaveAsync(It.IsAny<BookwormMemory>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("etag-after-first-save")
+            .ReturnsAsync("etag-after-second-save");
+
+        var orchestrator = new LibrarianOrchestrator(new StubBrain(), new ToolCallExecutor(client.Object), client.Object, memoryStore.Object);
+        await orchestrator.InitializeAsync();
+
+        await orchestrator.SaveMemoryAsync();
+        memoryStore.Verify(m => m.SaveAsync(It.IsAny<BookwormMemory>(), "etag-from-load", It.IsAny<CancellationToken>()), Times.Once);
+
+        await orchestrator.SaveMemoryAsync();
+        memoryStore.Verify(m => m.SaveAsync(It.IsAny<BookwormMemory>(), "etag-after-first-save", It.IsAny<CancellationToken>()), Times.Once);
+    }
 }

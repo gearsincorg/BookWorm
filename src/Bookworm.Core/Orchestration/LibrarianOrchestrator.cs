@@ -138,5 +138,12 @@ public sealed class LibrarianOrchestrator(IBrain brain, ToolCallExecutor toolExe
         }
     }
 
-    public Task SaveMemoryAsync(CancellationToken ct = default) => memoryStore.SaveAsync(_memory, _memoryEtag, ct);
+    public async Task SaveMemoryAsync(CancellationToken ct = default)
+    {
+        // Every successful save changes the blob's ETag server-side — reusing the ETag from before this
+        // save (or from the original Initialize load) on the *next* save always fails its precondition
+        // (HTTP 412), even though nothing else touched the blob. This bug was real: it meant every
+        // session after the first turn silently stopped persisting memory.
+        _memoryEtag = await memoryStore.SaveAsync(_memory, _memoryEtag, ct);
+    }
 }

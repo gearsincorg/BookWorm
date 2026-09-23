@@ -26,3 +26,7 @@ Thumbs.db
 # Secrets (never commit real credentials/connection strings)
 appsettings.*.local.json
 *.pfx
+installer/secrets.local.iss
+installer/publish/
+installer/output/
+*.exe

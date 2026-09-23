@@ -9,9 +9,9 @@ public sealed class InMemoryMemoryStore : IMemoryStore
     public Task<MemoryLoadResult> LoadAsync(CancellationToken ct = default) =>
         Task.FromResult(new MemoryLoadResult(_memory, null));
 
-    public Task SaveAsync(BookwormMemory memory, string? etag, CancellationToken ct = default)
+    public Task<string?> SaveAsync(BookwormMemory memory, string? etag, CancellationToken ct = default)
     {
         _memory = memory;
-        return Task.CompletedTask;
+        return Task.FromResult<string?>(null);
     }
 }
